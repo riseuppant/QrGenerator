@@ -985,7 +985,10 @@
                         <!-- Events will be populated dynamically -->
                     </select>
                 </div>
-                
+                <div id="reportsLoadingIndicator" style="display:none;">
+                    <div class="spinner"></div>
+                    <p>Generating reports...</p>
+                </div>
                 <div class="report-option" id="exportExcel">
                     <i class="fas fa-file-excel"></i>
                     <h3>Excel Report</h3>
@@ -1550,6 +1553,15 @@ function getCurrentTime() {
 
 // Additional functions for new features
 function showToast(message, type) {
+    // First, check if we already have 3 or more toasts displayed
+    const currentToasts = $('.toast');
+    
+    // If we have 3 or more toasts already, remove the oldest one (first one)
+    if (currentToasts.length >= 3) {
+        currentToasts.first().remove();
+    }
+    
+    // Create the new toast
     const toast = `
         <div class="toast toast-${type}">
             <i class="toast-icon fas fa-${type === 'success' ? 'check-circle' : type === 'warning' ? 'exclamation-triangle' : 'exclamation-circle'}"></i>
@@ -1559,11 +1571,33 @@ function showToast(message, type) {
             </div>
         </div>
     `;
+    
+    // Append the new toast to the container
     $('#toastContainer').append(toast);
-    setTimeout(() => {
-        $('.toast').first().remove();
-    }, 5000);
+    
+    // Set a timeout to remove this toast after 5 seconds
+    const $newToast = $('#toastContainer .toast').last();
+    $newToast.data('timeoutId', setTimeout(() => {
+        $newToast.fadeOut(300, function() {
+            $(this).remove();
+        });
+    }, 5000));
 }
+
+// Add this function to clear all toasts when needed
+function clearAllToasts() {
+    $('.toast').remove();
+}
+
+// Make sure the toastContainer exists
+$(document).ready(function() {
+    if ($('#toastContainer').length === 0) {
+        $('body').append('<div id="toastContainer"></div>');
+        
+        // Apply your existing styles to the new container
+        $('#toastContainer').addClass('toast-container');
+    }
+});
 
 function refreshResults() {
     updateResultsTable();
