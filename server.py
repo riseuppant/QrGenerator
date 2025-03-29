@@ -4,6 +4,8 @@ import qrcode
 import openpyxl
 from flask import Flask, render_template, request, jsonify, send_file, redirect
 import pandas as pd
+import json
+from datetime import datetime
 
 app = Flask(__name__)
 
@@ -244,11 +246,105 @@ def download_qr(event_name):
     if zip_path:
         return send_file(zip_path, as_attachment=True)
     return jsonify({'status': 'error', 'message': 'No QR codes found for this event.'})
+@app.route('/scan', methods=['GET'])
+def scan_page():
+    """Render the QR code scanner page"""
+    return render_template('scan.html')
 
+@app.route('/get_events', methods=['GET'])
+def get_events():
+    """API endpoint to get available events"""
+    events = get_available_events()
+    return jsonify({'status': 'success', 'events': events})
+
+@app.route('/save_attendance', methods=['POST'])
+def save_attendance():
+    """Save attendance data to the event's Excel file"""
+    try:
+        data = request.json
+        event_name = data.get('event')
+        attendance_data = data.get('attendance', [])
+        
+        if not event_name or not attendance_data:
+            return jsonify({
+                'status': 'error',
+                'message': 'Missing event name or attendance data'
+            })
+        
+        # Path to the event's Excel file
+        excel_path = os.path.join(EXCEL_SHEETS_DIR, f'{event_name}_students.xlsx')
+        
+        if not os.path.exists(excel_path):
+            return jsonify({
+                'status': 'error',
+                'message': f'Excel file for {event_name} not found'
+            })
+        
+        # Load the Excel file
+        df = pd.read_excel(excel_path)
+        
+        # Add attendance column if not exists
+        if 'Attendance' not in df.columns:
+            df['Attendance'] = 'Not Registered'
+        
+        # Add timestamp column if not exists
+        if 'Timestamp' not in df.columns:
+            df['Timestamp'] = None
+            
+        # Add attended event column if not exists
+        if 'Attended Event' not in df.columns:
+            df['Attended Event'] = None
+        
+        # Current timestamp
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Update attendance status for each scanned student
+        for item in attendance_data:
+            roll_number = item.get('rollNumber')
+            status = item.get('status')
+            event_from_qr = item.get('eventFromQR')
+            
+            # Find the student in the dataframe
+            mask = df['Roll Number'] == roll_number
+            
+            if mask.any():
+                if status == 'present':
+                    df.loc[mask, 'Attendance'] = 'Present'
+                    df.loc[mask, 'Timestamp'] = now
+                elif status == 'wrong_event':
+                    df.loc[mask, 'Attendance'] = 'Wrong Event'
+                    df.loc[mask, 'Attended Event'] = event_from_qr
+                    df.loc[mask, 'Timestamp'] = now
+            else:
+                # Add a new row for students not in the Excel but scanned
+                new_row = {
+                    'Name': item.get('name', 'Unknown'),
+                    'Roll Number': roll_number,
+                    'Attendance': 'Not Registered',
+                    'Timestamp': now
+                }
+                df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+        
+        # Save the updated Excel file
+        df.to_excel(excel_path, index=False)
+        
+        return jsonify({
+            'status': 'success',
+            'message': f'Attendance saved for {event_name}',
+            'updated_count': len(attendance_data)
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': f'Error saving attendance: {str(e)}'
+        })
+
+# Update the scan_qr function to use our local scanner
 @app.route('/scan_qr')
 def scan_qr():
-    # Redirect to the external ScanTrack application
-    return redirect(SCAN_TRACK_URL)
+    # Redirect to our local scanner page instead of external app
+    return redirect('/scan')
 
 @app.route('/parse_qr', methods=['POST'])
 def parse_qr():
