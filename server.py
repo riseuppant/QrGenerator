@@ -2,7 +2,7 @@ import os
 import zipfile
 import qrcode
 import openpyxl
-from flask import Flask, render_template, request, jsonify, send_file
+from flask import Flask, render_template, request, jsonify, send_file, redirect
 import pandas as pd
 
 app = Flask(__name__)
@@ -13,6 +13,9 @@ QR_CODES_DIR = 'QR Codes'
 os.makedirs(EXCEL_SHEETS_DIR, exist_ok=True)
 os.makedirs(QR_CODES_DIR, exist_ok=True)
 
+# Configuration for ScanTrack app
+SCAN_TRACK_URL = "http://localhost:3000"  # Change this to the actual URL where ScanTrack runs
+
 def generate_qr_codes(event_name):
     """
     Generate QR codes for all students in an event's Excel sheet.
@@ -22,21 +25,22 @@ def generate_qr_codes(event_name):
     os.makedirs(qr_event_dir, exist_ok=True)
 
     try:
-        # Load workbook
-        wb = openpyxl.load_workbook(excel_path)
-        sheet = wb.active
-
+        # Use pandas to read the Excel file instead of openpyxl
+        # This ensures we're working with the cleaned data
+        df = pd.read_excel(excel_path)
+        
         # Track successful and failed QR code generations
         success_count = 0
         failed_count = 0
 
-        # Iterate through rows (assuming first row is header)
-        for row in sheet.iter_rows(min_row=2, values_only=True):
-            if len(row) >= 2:  # Ensure name and roll number exist
-                name, roll_number = row[0], row[1]
-                
-                # QR code data with error handling for None values
-                qr_data = f"Name: {name or 'N/A'}\nRoll Number: {roll_number or 'N/A'}\nEvent: {event_name}"
+        # Process each row in the DataFrame
+        for idx, row in df.iterrows():
+            name = row.get('Name')
+            roll_number = row.get('Roll Number')
+            
+            if pd.notna(name) and pd.notna(roll_number):  # Check for non-null values
+                # QR code data
+                qr_data = f"Name: {name}\nRoll Number: {roll_number}\nEvent: {event_name}"
                 
                 # Create QR code
                 qr = qrcode.QRCode(version=1, box_size=10, border=5)
@@ -121,19 +125,18 @@ def add_event(event_name, file):
                 'message': 'Event already exists. Choose a different name.'
             }
         
-        # Save the uploaded file
-        filename = f'{event_name}_students.xlsx'
-        filepath = os.path.join(EXCEL_SHEETS_DIR, filename)
-        file.save(filepath)
+        # Save the uploaded file temporarily
+        temp_filepath = os.path.join(EXCEL_SHEETS_DIR, 'temp.xlsx')
+        file.save(temp_filepath)
         
         # Validate Excel file
         try:
             # Read the original dataframe
-            df = pd.read_excel(filepath)
+            df = pd.read_excel(temp_filepath)
             
             # Check for minimum columns
             if len(df.columns) < 2:
-                os.remove(filepath)
+                os.remove(temp_filepath)
                 return {
                     'status': 'error', 
                     'message': 'Excel file must have at least Name and Roll Number columns.'
@@ -145,6 +148,9 @@ def add_event(event_name, file):
             # Find duplicate roll numbers
             duplicate_mask = df.duplicated(subset='Roll Number', keep='first')
             
+            # Save the final filepath
+            final_filepath = os.path.join(EXCEL_SHEETS_DIR, f'{event_name}_students.xlsx')
+            
             # If duplicates exist
             if duplicate_mask.any():
                 # Prepare duplicate details
@@ -153,8 +159,11 @@ def add_event(event_name, file):
                 # Keep only the first occurrence of each roll number
                 df_cleaned = df[~duplicate_mask].reset_index(drop=True)
                 
-                # Save the cleaned dataframe
-                df_cleaned.to_excel(filepath, index=False)
+                # Save the cleaned dataframe to the final path
+                df_cleaned.to_excel(final_filepath, index=False)
+                
+                # Remove temp file
+                os.remove(temp_filepath)
                 
                 return {
                     'status': 'warning', 
@@ -165,8 +174,11 @@ def add_event(event_name, file):
                     'kept_rows': len(df_cleaned)
                 }
             
-            # If no duplicates, save as is
-            df.to_excel(filepath, index=False)
+            # If no duplicates, save as is to the final path
+            df.to_excel(final_filepath, index=False)
+            
+            # Remove temp file
+            os.remove(temp_filepath)
             
             return {
                 'status': 'success', 
@@ -176,8 +188,9 @@ def add_event(event_name, file):
             }
         
         except Exception as e:
-            # Remove the file if there's an error
-            os.remove(filepath)
+            # Remove the temp file if there's an error
+            if os.path.exists(temp_filepath):
+                os.remove(temp_filepath)
             return {
                 'status': 'error', 
                 'message': f'Error processing Excel file: {str(e)}'
@@ -234,7 +247,8 @@ def download_qr(event_name):
 
 @app.route('/scan_qr')
 def scan_qr():
-    return render_template(r"ScanTrack/public/index.html")
+    # Redirect to the external ScanTrack application
+    return redirect(SCAN_TRACK_URL)
 
 @app.route('/parse_qr', methods=['POST'])
 def parse_qr():
